@@ -4,6 +4,14 @@
 #include "framework.h"
 #include "Win32_TextLiveRegion.h"
 
+// This app is the default Win32 app created in VS 2019, plus the code snippets shown at
+// https://docs.microsoft.com/en-us/accessibility-tools-docs/items/Win32/Text_LiveSetting.
+
+#include <initguid.h>
+#include "objbase.h"
+#include "uiautomation.h"
+IAccPropServices* _pAccPropServices = NULL;
+
 #define MAX_LOADSTRING 100
 
 // Global Variables:
@@ -162,10 +170,38 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 // Message handler for about box.
 INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    HRESULT hr;
+
     UNREFERENCED_PARAMETER(lParam);
     switch (message)
     {
     case WM_INITDIALOG:
+
+        // Run when the UI is created.
+        hr = CoCreateInstance(
+            CLSID_AccPropServices,
+            nullptr,
+            CLSCTX_INPROC,
+            IID_PPV_ARGS(&_pAccPropServices));
+        if (SUCCEEDED(hr))
+        {
+            // Set up the status label to be an assertive LiveRegion. The assertive property 
+            // is used to request that the screen reader announces the update immediately. 
+            // And alternative setting of polite requests that the screen reader completes 
+            // any in-progress announcement before announcing the LiveRegion update.
+
+            VARIANT var;
+            var.vt = VT_I4;
+            var.lVal = Assertive;
+
+            hr = _pAccPropServices->SetHwndProp(
+                GetDlgItem(hDlg, IDC_LABEL_STATUS),
+                OBJID_CLIENT,
+                CHILDID_SELF,
+                LiveSetting_Property_GUID,
+                var);
+        }
+
         return (INT_PTR)TRUE;
 
     case WM_COMMAND:
@@ -174,7 +210,39 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
             EndDialog(hDlg, LOWORD(wParam));
             return (INT_PTR)TRUE;
         }
+        else if (LOWORD(wParam) == IDC_BUTTON_CHECKSTATUS)
+        {
+            SetDlgItemText(hDlg, IDC_LABEL_STATUS, L"Woohoo! Status is just fine.");
+
+            // Run when the text on the label changes. Raise a UIA LiveRegionChanged 
+            // event so that a screen reader is made aware of a change to the LiveRegion.
+            // Make sure the updated text is set on the label before making this call.
+            NotifyWinEvent(
+                EVENT_OBJECT_LIVEREGIONCHANGED,
+                GetDlgItem(hDlg, IDC_LABEL_STATUS),
+                OBJID_CLIENT,
+                CHILDID_SELF);
+        }
+
         break;
+
+    case WM_DESTROY:
+
+        // Run when the UI is destroyed.
+        if (_pAccPropServices != nullptr)
+        {
+            // We only added the one property to the hwnd.
+            MSAAPROPID props[] = { LiveSetting_Property_GUID };
+            hr = _pAccPropServices->ClearHwndProps(
+                GetDlgItem(hDlg, IDC_LABEL_STATUS),
+                OBJID_CLIENT,
+                CHILDID_SELF,
+                props,
+                ARRAYSIZE(props));
+
+            _pAccPropServices->Release();
+            _pAccPropServices = NULL;
+        }
     }
     return (INT_PTR)FALSE;
 }
